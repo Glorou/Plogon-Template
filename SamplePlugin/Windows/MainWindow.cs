@@ -1,10 +1,14 @@
 ﻿using System;
+using System.Globalization;
 using System.Numerics;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using Dalamud.Bindings.ImGui;
 using Lumina.Excel.Sheets;
+using Pictomancy;
+using FFXIVClientStructs.FFXIV.Client.Graphics;
+using SamplePlugin.Apricot;
 
 namespace SamplePlugin.Windows;
 
@@ -13,6 +17,8 @@ public class MainWindow : Window, IDisposable
     private string GoatImagePath;
     private Plugin Plugin;
 
+    private string addressStr;
+    private nint address = 0;
     // We give this window a hidden ID using ##
     // So that the user will see "My Amazing Window" as window title,
     // but for ImGui the ID is "My Amazing Window##With a hidden ID"
@@ -33,18 +39,37 @@ public class MainWindow : Window, IDisposable
 
     public override void Draw()
     {
+        
         // Do not use .Text() or any other formatted function like TextWrapped(), or SetTooltip().
         // These expect formatting parameter if any part of the text contains a "%", which we can't
         // provide through our bindings, leading to a Crash to Desktop.
         // Replacements can be found in the ImGuiHelpers Class
-        ImGui.TextUnformatted($"The random config bool is {Plugin.Configuration.SomePropertyToBeSavedAndWithADefault}");
-
-        if (ImGui.Button("Show Settings"))
-        {
-            Plugin.ToggleConfigUI();
-        }
 
         ImGui.Spacing();
+        if (ImGui.Button("Show VFX"))
+        {
+            Plugin.VfxManager.AddVfx(new Vfx("test", "fish_kemi00f", Plugin.ObjectTable.LocalPlayer!), 60000);
+        }
+        
+
+        if (PictoService.VfxRenderer.Address != null)
+        {
+            ImGui.SameLine();
+            unsafe
+            {
+                ImGui.TextUnformatted($"{(nint)PictoService.VfxRenderer.Address.data:X}");
+                ImGui.TextUnformatted($"{Plugin.debugAddress:X}");
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Copy Address"))
+            {
+                unsafe
+                {
+                    ImGui.SetClipboardText($"{(nint)PictoService.VfxRenderer.Address.data:X}");
+                }
+            }
+        }
+
 
         // Normally a BeginChild() would have to be followed by an unconditional EndChild(),
         // ImRaii takes care of this after the scope ends.
@@ -54,22 +79,65 @@ public class MainWindow : Window, IDisposable
             // Check if this child is drawing
             if (child.Success)
             {
-                ImGui.TextUnformatted("Have a goat:");
-                var goatImage = Plugin.TextureProvider.GetFromFile(GoatImagePath).GetWrapOrDefault();
-                if (goatImage != null)
+                //ImGui.TextUnformatted($"{Plugin.AudioAsString()}");
+                unsafe
                 {
-                    using (ImRaii.PushIndent(55f))
+                    var core = Plugin._hooks.core;
+                    if (core != null && address != 0)
                     {
-                        ImGui.Image(goatImage.Handle, new Vector2(goatImage.Width, goatImage.Height));
+                        ImGui.Text($"Apricot: ");
+                        ImGui.SameLine();
+                        var coreStr = $"{(nint)core:X}";
+                        ImGui.InputText("##CorePtr", ref coreStr, 256);
+
+
+                        var ptr = (VfxObject*)address;  //11:33:20.249 | INF | [VFXEditor] New Static: vfx/common/eff/fish_kemi00f.avfx 
+
+                        
+                        var resInst = ptr->ResourceInstance;
+                        if (resInst == null) return;
+		
+                        ImGui.Text($"Resource Instance: ");
+                        ImGui.SameLine();
+                        var resStr = $"{(nint)resInst:X}";
+                        ImGui.InputText("##ResInstPtr", ref resStr, 256);
+		
+                        ImGui.Text($"Apricot Handle: {resInst->Handle.Id:X} {resInst->Handle.Index:X}");
+		
+                        var inst = core->Data->GetIndex(resInst->Handle.Index)->Instance;
+                        if (inst == null) return;
+		
+                        ImGui.Text($"Apricot Instance: ");
+                        ImGui.SameLine();
+                        var instStr = $"{(nint)inst:X}";
+                        ImGui.InputText("##InstPtr", ref instStr, 256);
+
+                        var doc = inst->Document;
+                        if (doc == null) return;
+		
+                        ImGui.Text($"{doc->ParticleCount}");
+
+                        if (doc->Particles != null) {
+                            for (var i = 0; i < doc->ParticleCount; i++) {
+                                var particle = doc->Particles + i;
+                                ImGui.Text($"{(nint)particle:X}");
+
+                                using var _ = ImRaii.PushIndent();
+
+                                var col = particle->Rgb;
+                                if (col == null) continue;
+
+                                var keys = col->GetKeyCount();
+                                ImGui.Text($"Keys: {keys}");
+
+                                for (var k = 0; k < keys; k++) {
+                                    var key = col->GetKey(k);
+                                    ImGui.ColorEdit3($"##ColorEdit_{i}_{k}", ref key->Color, ImGuiColorEditFlags.Float);
+                                }
+                            }
+                        }
                     }
                 }
-                else
-                {
-                    ImGui.TextUnformatted("Image not found.");
-                }
-
-                ImGuiHelpers.ScaledDummy(20.0f);
-
                 // Example for other services that Dalamud provides.
                 // ClientState provides a wrapper filled with information about the local player object and client.
 
